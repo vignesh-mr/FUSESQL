@@ -1,0 +1,21 @@
+This is a project which tries to integrate the concept of a VFS and a debugger's main function -- viewing the live state variables and the details of the program.
+
+This project uses fuse and fuse-python bindings to create and mount a VFS.
+At present the code must be added manually to save the current state of the variables, modules etc.
+
+
+
+This is just version 0.0.1
+
+Future Enhancements
+
+Must add the code such that as the program is being executed the program state is updated periodically and visible as a text file.
+Must add code such the structure of the classes defined is shown in an heirarchical manner.
+
+
+
+Usage
+
+python somefile.py mountpoint
+
+the test file is test.py
