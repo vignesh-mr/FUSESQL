@@ -1,11 +1,9 @@
-from fuse import Fuse		#Get the Fuse class from fuse module
+from fuse import FUSE, Operations, LoggingMixIn		#Get the Fuse class from fuse module
 import fuse
 import tempfile as tf
 import os,stat,urllib,errno,sys
 import time
-import SQL,MySQLdb
-import utils
-
+import SQL,utils,MySQLdb
 
 files=[]			# Represent path of the files
 dirs={'/':[]}			# Represent directory structure as a key value python dictionary object
@@ -17,7 +15,7 @@ tmpfiles = {}
 writefile = {}
 prvline = {} 
 writehandle = {}
-class MyStat(fuse.Stat):		#The resource statistics as given by fuse.Stat and set to values
+class MyStat(fuse.c_stat):		#The resource statistics as given by fuse.Stat and set to values
 	def __init__(self):
 		self.st_mode=0
 		self.st_nlink=0
@@ -47,93 +45,64 @@ def SQLdir(Pdblist):
 	st.st_ctime=now
 	dir_mode['/'] = st			#Set the root directory attributes
 	for db in dblist:
-		#if str(db) != 'employees':
-		path = folder+str(db)		#/{dbname}	db contains name
-	
-		dirs[folder].append(path)
-		dirpath.append(path)
-		dirs[path] = []
-		tabs = SQL.DB.listtabs(db,Pdblist)
-		SQL.DB.listcreatetables(db,Pdblist)
-		for tab in tabs:
+		if str(db) != 'employees':
+			path = folder+str(db)		#/{dbname}	db contains name
 		
-			tbs.append(path+'/'+str(tab))
-		st=MyStat()
-		st.st_mode=stat.S_IFDIR|st.st_mode		#Set attributes for alll other directories or in this case Databases
-		now=time.time()
-		st.st_atime=now
-		st.st_mtime=now
-		st.st_ctime=now
-		dir_mode[path] = st
-	##print dblist
-	##print dirs
-	##print dir_mode
-	##print dirpath
-	#print "Building Reverse Index Tree"
+			dirs[folder].append(path)
+			dirpath.append(path)
+			dirs[path] = []
+			tabs = SQL.DB.listtabs(db,Pdblist)
+			SQL.DB.listcreatetables(db,Pdblist)
+			for tab in tabs:
+			
+				tbs.append(path+'/'+str(tab))
+			st=MyStat()
+			st.st_mode=stat.S_IFDIR|st.st_mode		#Set attributes for alll other directories or in this case Databases
+			now=time.time()
+			st.st_atime=now
+			st.st_mtime=now
+			st.st_ctime=now
+			dir_mode[path] = st
+	#print dblist
+	#print dirs
+	#print dir_mode
+	#print dirpath
+	print "Building Reverse Index Tree"
 	counter = 0
 	
 	for db in Pdblist:
-		if 'information_schema' not in str(db) and 'mysql' != str(db): 
+		if 'employees' != str(db) and 'information_schema' not in str(db) and 'mysql' != str(db): 
 			counter += db.buildIndex()
-	#print "Totally indexed ", counter, " records in all databases"
-	#for db in Pdblist[:]:
-	#	if str(db) == 'employees':
-	#		Pdblist.remove(db)
+	print "Totally indexed ", counter, " records in all databases"
+	for db in Pdblist[:]:
+		if str(db) == 'employees':
+			Pdblist.remove(db)
 	return tbs,Pdblist	#return all tab names and dbobjects list and create table as tuple
 
-class FuseFS(Fuse):		#Base FUSE CLASS
+class FuseFS(LoggingMixIn, Operations):		#Base FUSE CLASS
 	test=[]
 	
-	def __init__(self,version,usage,tbs):
-		super(FuseFS,self).__init__(version=version,usage=usage)	#Use the superclass init function
+	def __init__(self,tbs):
+		#super(FuseFS,self).__init__(version=version,usage=usage)	#Use the superclass init function
 		self.tbs,self.dbobjlist = tbs		#tab names and dbobjlist
 		utils.Logger('self.dbobjlist',str(self.dbobjlist))
 		for t in self.tbs:
-			#print t,type(t)
-			self.makefiles(t,stat.S_IRUSR|stat.S_IRGRP|stat.S_IROTH,444)	# set all the attribute values of the tables in each database
-			self.mknode(t+".schema", stat.S_IRUSR|stat.S_IRGRP|stat.S_IROTH, 444)
+			print t,type(t)
+			self.mknode(t,stat.S_IRUSR|stat.S_IRGRP|stat.S_IROTH,777)	# set all the attribute values of the tables in each database
+			self.mknode(t+".schema", stat.S_IRUSR|stat.S_IRGRP|stat.S_IROTH, 777)
 	
-	
-	def makefiles(self, path, mode, dev):
-		db = path
-		if 'information_schema' not in str(db) and 'mysql' not in  str(db): 
-			folder, db, table = path.split('/')
-			table = table.split('.')[0]					#Get the database the table belongs to
-			nrows = SQL.DB.index[db][table].getRowCount()
-			#print '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``', db,table,nrows		
-			files = 0
-			rows = 0
-			taboffset = {}
-			
-			while nrows - SQL.NROWS >= 0:
-				self.mknode(path + utils.part + str(files),mode,dev)
-				rows += SQL.NROWS
-				nrows -= SQL.NROWS
-				taboffset[path + utils.part + str(files)] = SQL.DB.index[db][table].getOffset(files)
-				#print path + utils.part + str(files), taboffset[path + utils.part + str(files)]
-				files += 1
-			rows += nrows
-			if nrows < SQL.NROWS:
-				self.mknode(path + utils.part + str(files),mode,dev)
-				rows += SQL.NROWS
-				nrows -= SQL.NROWS
-				taboffset[path + utils.part + str(files)] = SQL.DB.index[db][table].getOffset(files)
-				#print 'OFFSET ~~~', path + utils.part + str(files), taboffset[path + utils.part + str(files)]
-			SQL.DB.tabfiles.update(taboffset)
-			#raw_input()
-			
-	def  getattr(self,path):#1
+	def  getattr(self,path, fh = None):#1
 		'''Get the attributes of a resource'''
 		st=MyStat()
-		#print "TEST ", path
+		print "TEST ", path
 		
 		if path in dirpath:
 			st=dir_mode[path]
-			st.st_mode=stat.S_IFDIR | 0444 
+			st.st_mode=stat.S_IFDIR | 0777
 			st.st_nlink=2
 		elif path in files:
 			st=file_mode[path]
-			st.st_mode = stat.S_IFREG | 0444 
+			st.st_mode = stat.S_IFREG | 0777
             		st.st_nlink = 1
 			
 		else:
@@ -156,20 +125,12 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 			
 			tt=[l for l in files if path == l.rsplit('/',1)[0]]	#Get tabnames in that path
 			utils.Logger('tables in db',str(tt))
-			
 			for t in tt:
 				fullpath = str(t)
-				if '.schema' in t:
-					if fullpath in file_mode:
-						file_mode[fullpath].st_size = len(dbobj.crtabs[t.rsplit('/',1)[1].split('.')[0]])
-				elif fullpath in file_mode:
-					utils.Logger('full path to table',str(fullpath))
+				utils.Logger('full path to table',str(fullpath))
+				if fullpath in file_mode:
 					utils.Logger('path exists in file modes',str(fullpath))
-					#print 'path exists in file modes',str(fullpath)
-					
-					file_mode[fullpath].st_size = dbobj.gettabsizepart(t)	#Set the size of file to tabsize
-					#print file_mode[fullpath]
-					#raw_input()
+					file_mode[fullpath].st_size = dbobj.gettabsize(t)	#Set the size of file to tabsize
 					utils.Logger('size set',str(fullpath))
 		else:
 			tt=[l for l in files if path == l.rsplit('/',1)[0]]	
@@ -189,9 +150,10 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 		tt.append('.')
 		tt.append('..')
 		utils.Logger('list of files and directories',str(tt))
-		for r in tt:
+		return tt
+		#for r in tt:
 			#if r[0]!='.' and r[-1]!='~':
-			yield fuse.Direntry(r)		#yield the data for each and every resource in the current directory
+		#	yield fuse.Direntry(r)		#yield the data for each and every resource in the current directory
 
 	
 	def rmdir(self,path):#3
@@ -237,15 +199,7 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 	def rename(self,old,new):#6
 		if '.' in new:
 			if 'csv' in new.rsplit('.',1)[1]:
-				if '~' == new[-1]:
-					if old in files:
-						files.remove(old)
-						files.append(new)
-						file_content[new]=''
-						c=file_mode[old]
-						file_mode.pop(old)
-						file_mode[new]=c
-				elif '.csv' not in old and '.schema' not in old:
+				if '.csv' not in old and '.schema' not in old:
 					for p in files:
 						p = p.rsplit('.',1)
 						if p[0] == new.rsplit('.',1)[0] and p[1] == 'schema':
@@ -261,15 +215,7 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 								return
 				return -errno.EINTR
 			elif 'schema' in new.rsplit('.',1)[1]:
-				if '~' == new[-1]:
-					if old in files:
-						files.remove(old)
-						files.append(new)
-						file_content[new]=''
-						c=file_mode[old]
-						file_mode.pop(old)
-						file_mode[new]=c
-				elif '.schema' not in old and '.csv' not in old:
+				if '.schema' not in old and '.csv' not in old:
 					if old in files:
 						files.remove(old)
 						files.append(new)
@@ -283,9 +229,17 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 							SQL.DB.createnewtable(self.dbobjlist,new)
 							self.mknode(new.rsplit('.',1)[0],stat.S_IRUSR|stat.S_IRGRP|stat.S_IROTH,777)
 						return
+				elif '~' == new[-1]:
+					if old in files:
+						files.remove(old)
+						files.append(new)
+						file_content[new]=''
+						c=file_mode[old]
+						file_mode.pop(old)
+						file_mode[new]=c
 					
 		elif old in dir_mode:
-			#print 'DIRECTORY RENAME'
+			print 'DIRECTORY RENAME'
 			folder,name = new.rsplit('/',1)
 			if folder == '':
 				folder = '/'
@@ -337,12 +291,12 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 		if '.schema' in path:
 			SQL.DB.createnewtable(self.dbobjlist,path)
 			self.mknode(path.rsplit('.',1)[0],stat.S_IRUSR|stat.S_IRGRP|stat.S_IROTH,777)
-		#print 'Added',path
-		#print 'MODE',str(st)
+		print 'Added',path
+		print 'MODE',str(st)
 		return 0
 	
 	def mknode(self,path,mode,dev):#7
-		#print "CREATING FILE ",path
+		print "CREATING FILE ",path
 		global files,file_content,file_mode
 		now=time.time()
 		if '.schema' not in path:
@@ -384,25 +338,10 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 			tmpfiles[path].unlink(tmpfiles[path].name)
 			
 			del tmpfiles[path]'''
-	def open(self, path, flags):  
-		# Only support for 'READ ONLY' flag  
-		'''access_flags = os.O_RDONLY | os.O_WRONLY | os.O_RDWR  
-		if flags & access_flags != os.O_RDONLY:  
-	    		return -errno.EACCES  
-		else:'''  
-		return 0
-			  
 	def read(self, path, size, offset):#8	#path contains .csv extension
 		'''Read a given file'''
-		offsetq = 0
-		if '.' in path:
-			if path.split('.')[0] in SQL.DB.tabfiles:
-				offsetq = offset + SQL.DB.tabfiles[path.split('.')[0]]
-				#print SQL.DB.tabfiles[path.split('.')[0]], offsetq
-				#raw_input()
-		#print '~~~~~~~~~~~~~~~~~~~~~~~~READ~~~~~~~~~~~~~~~~~~~',path
-		#print "SIZE SIZE SIZE ", size, "OFFSET OFFSET OFFSET ", offset
-		##raw_input()
+		print '~~~~~~~~~~~~~~~~~~~~~~~~READ~~~~~~~~~~~~~~~~~~~',path
+		print "SIZE SIZE SIZE ", size, "OFFSET OFFSET OFFSET ", offset
 		utils.Logger("SIZE SIZE SIZE " +str( size) +  "OFFSET OFFSET OFFSET "+ str(offset) , "")
 		global file_mode
 		if ('.schema' not in path and '.csv' not in path) or '~' in path or '#' in path:
@@ -412,23 +351,21 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 				slen = len(buf)
 				if offset < slen:
 				    buf = buf[offset:offset+size]
-				    #print buf
+				    print buf
 				else:
 				    buf = ''
 			return buf
 		try:
 			buff = ""
 			utils.Logger('read path',str(path))
-			#print 'OFFSET',offsetq
-			table = path.rsplit('/',1)[1].split('.')[0]		#Get the table name alone from /path/tablepartn.csv
-			if utils.part in table:
-				table = table.split(utils.part)[0]
+			print 'OFFSET',offset
+			table = path.rsplit('/',1)[1].split('.')[0]		#Get the table name alone from /path/table.csv
 			db = path.split('/')[1]					#Get the database the table belongs to
 			utils.Logger('db path',str(db))
 			dbobj = SQL.DB.getobject(self.dbobjlist,db)	#get object corresponding to dbname
 			utils.Logger('Got DB Obj',str(dbobj))
 			if '.schema' not in path and '.csv' in path and '~' not in path and '#' not in path:
-				'''if path not in tmpfiles:
+				if path not in tmpfiles:
 					f = tmpfiles[path] = tf.NamedTemporaryFile(mode = 'w+b', delete = False, prefix = 'fsql' + table + '.csv' , bufsize = 10000000)
 				else:
 					if offset == 0:
@@ -436,42 +373,36 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 						f.truncate(0)
 					else:
 						f = open(tmpfiles[path].name, "a")
-				'''
-				##print 'writing to tmpfile ~~~~~~~~~~~&&&&&&&' , tmpfiles[path].name
+				print 'writing to tmpfile ~~~~~~~~~~~&&&&&&&' , tmpfiles[path].name
 				#buff = dbobj.gettable(table)			# Get the table contents as string
 				head = dbobj.gettableheadings(table)		#Get the column headings as string
-				#print  file_mode[path].st_size
-				#raw_input('TABSIZE '+str(offsetq))
-				pkset = SQL.DB.index[str(dbobj)][table].getRowsPart(offsetq, size)
+				pkset = SQL.DB.index[str(dbobj)][table].getRows(offset, size)
 				buff = dbobj.gettableoffset(table, pkset)			# Get the table contents as string
 				utils.PKSetLogger(table, str(pkset))
 				buff = head + buff				# Final string representation
-				
 				utils.Logger('Got tab buf',str(buff))
-				#print 'FILESIZE',str(buff)
-				#raw_input()
-				#f.write(buff)
-				#f.close()
+				f.write(buff)
+				f.close()
 				#return str(buff)
 			else:
-				#print "~~~~~~~~~~~~~~~~~~~~~~~SCHEMA FILE~~~~~~~~~~~~~~~~~~~~~~~~~"
+				print "~~~~~~~~~~~~~~~~~~~~~~~SCHEMA FILE~~~~~~~~~~~~~~~~~~~~~~~~~"
 				try:
 					buff = dbobj.crtabs[table]
 					utils.Logger('Got tab create', str(buff))
 				except KeyError:
-					#print "TABLE DOES NOT EXIST"
+					print "TABLE DOES NOT EXIST"
 					return -errno.ENOENT
 			slen = len(buff)
 			utils.Logger('Length of '+str(path),str(slen))
-			#file_mode[path].st_size = slen
+			file_mode[path].st_size = slen
 			if offset < slen:
 			    buf = buff[offset:offset+size]
-			    #print '~~~~~~~~~~~~~~~~~~~~~~~~~``' + buf
+			    print '~~~~~~~~~~~~~~~~~~~~~~~~~``' + buf
 			else:
 			    buf = ''
 			return str(buf)
 		except MySQLdb.Error,e:
-			#print "MYSQL ERROR ~~~~~~~~~~~~~~", str(e)
+			print "MYSQL ERROR ~~~~~~~~~~~~~~", str(e)
 			return ""
 	
 	def fsdetroy(self):
@@ -481,9 +412,16 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 
 	def unlink(self,path):#9
 		global files,file_content,file_mode
-		#print 'unlink ',path
-		if '.schema' in path:
-			#print "REMOVING ",path
+		print 'unlink ',path
+		if '~' in path and 'lock' in path:
+			print "REMOVING ",path
+			if path in files:
+				files.remove(path)
+				if path in file_content:
+					file_content.pop(path)
+				file_mode.pop(path)
+		elif '.schema' in path:
+			print "REMOVING ",path
 			if path in files:
 				files.remove(path)
 				if path in file_content:
@@ -496,7 +434,7 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 				self.unlink1(path.rsplit('.',1)[0] + '.csv' )
 		
 		elif '.csv' in path:
-			#print "REMOVING ",path
+			print "REMOVING ",path
 			if path in files:
 				files.remove(path)
 				if path in file_content:
@@ -507,19 +445,11 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 				dbobj = SQL.DB.getobject(self.dbobjlist,db)	#get object corresponding to dbname
 				dbobj.removeTable(tabname)
 				self.unlink1(path.rsplit('.',1)[0] + '.schema' )
-		else:
-			#print "REMOVING ",path
-			if path in files:
-				files.remove(path)
-				if path in file_content:
-					file_content.pop(path)
-				file_mode.pop(path)
-				del file_content[path]
 			
 	def unlink1(self,path):#9
 		global files,file_content,file_mode
 		if '.schema' in path:
-			#print "REMOVING ",path
+			print "REMOVING ",path
 			if path in files:
 				files.remove(path)
 				if path in file_content:
@@ -530,7 +460,7 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 				dbobj = SQL.DB.getobject(self.dbobjlist,db)	#get object corresponding to dbname
 				dbobj.removeTable(tabname)
 		elif '.csv' in path:
-			#print "REMOVING ",path
+			print "REMOVING ",path
 			if path in files:
 				files.remove(path)
 				if path in file_content:
@@ -545,34 +475,20 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 	def write(self,path,data,offset):#10
 		
 		global file_content,files,file_mode
-		#print '~~~~~~~~~~~~~~~~~~~Write~~~~~~~~~~~~~~~~~~~',path
+		print '~~~~~~~~~~~~~~~~~~~Write~~~~~~~~~~~~~~~~~~~',path
 		if '.schema' in path:
 			table = path.rsplit('/',1)[1].split('.')[0]		#Get the table name alone from /path/table.csv
 			db = path.split('/')[1]					#Get the database the table belongs to
 			utils.Logger('db path',str(db))
 			dbobj = SQL.DB.getobject(self.dbobjlist,db)	#get object corresponding to dbname
-			old = ''
-			if table in dbobj.crtabs:
-				old = dbobj.crtabs[table]
-			ldata = data.lower()
-			old = old.lower()
-			old = old.split('(',1)[1].rsplit(')',1)[0].split(',')
-			old = [o.strip() for o in old]
-			ldata = ldata.split('(',1)[1].rsplit(')',1)[0].split(',')
-			ldata = [d.strip() for d in ldata]
-			ldata = set(ldata)
-			old = set(old)
-			add = ldata - old
-			remove = old - ldata
-			#dbobj.crtabs[table] = data 
-			if dbobj.alterTable(add, remove, table, 1) != -1:
-				dbobj.crtabs[table] = data
+			dbobj.crtabs[table] = data 
+			if dbobj.createTable(table, 1) != -1:
 				return len(data)
 		elif '.csv' in path and '~' not in path and '#' not in path:
 			if path not in writefile:
 				writefile[path] = []
 			if data[-1] != '\n':
-				#print 'NOT COMPLETE RECORD'
+				print 'NOT COMPLETE RECORD'
 				data, prvline[path] = data.rsplit('\n',1)
 			else:
 				prvline[path] = ''
@@ -587,20 +503,20 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 					writefile[path].append(d)
 			return len(data)
 			'''if data[-1] != '\n':
-				#print 'NOT COMPLETE RECORD'
+				print 'NOT COMPLETE RECORD'
 			utils.Logger('read path',str(path))
-			#print 'OFFSET',offset
+			print 'OFFSET',offset
 			table = path.rsplit('/',1)[1].split('.')[0]		#Get the table name alone from /path/table.csv
 			db = path.split('/')[1]					#Get the database the table belongs to
 			utils.Logger('db path',str(db))
 			dbobj = SQL.DB.getobject(self.dbobjlist,db)	#get object corresponding to dbname
 			utils.Logger('Got DB Obj',str(dbobj))
 			pkset = SQL.DB.index[str(dbobj)][table].getRows(offset, len(data))
-			#print len(pkset)
-			#print pkset
-			#print '~' * 40
-			#print data
-			#print '~' * 40
+			print len(pkset)
+			print pkset
+			print '~' * 40
+			print data
+			print '~' * 40
 			return len(data)'''
 		else:
 			file_content[path] = data
@@ -610,20 +526,20 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 				data = data.split('\n')[1:]
 				data = '\n'.join(data)
 			utils.Logger('Write to file',str(path)+'>>>>>'+str(data))
-			##print 'DATA',data
-			##print 'OFFSET', offset
+			#print 'DATA',data
+			#print 'OFFSET', offset
 			#lastline = data.split('\n')[-1]
 			#r = lastline.split(utils.delim)
 			db = path.split('/')[1]			#Get the database the table belongs to
 			table = path.rsplit('/',1)[1].split('.')[0]	#get the table name alone from /path/..../table.csv
 			dbobj = SQL.DB.getobject(self.dbobjlist,db)
 			if not r[-1] or len(r) != dbobj.getRecsize(table):
-				#print 'Rec Size low', len(r)
+				print 'Rec Size low', len(r)
 				lines = data.split('\n')[:-1]
 				data = '\n'.join(lines)
-				#print "DATA LEN", len(data)
-				#print "HALF REC", r
-				#print 'Bottom Rec',lines[-1]
+				print "DATA LEN", len(data)
+				print "HALF REC", r
+				print 'Bottom Rec',lines[-1]
 				dbobj.setlastRec(table, lastline)
 		
 			dbobj.settabcontent(table, data, offset)		#call the modificaiton function with the table name and data
@@ -684,15 +600,15 @@ class FuseFS(Fuse):		#Base FUSE CLASS
 		file_mode[path]=st
 		return 0
 	
-fuse.fuse_python_api=(0,2)
+#fuse.fuse_python_api=(0,2)
 
 def main(tbs):
-	
-	server=FuseFS(version="%prog "+fuse.__version__,usage="Error",tbs=tbs)
+	fu = FUSE(FuseFS(tbs), sys.argv[1], foreground=True)
+	'''server=FuseFS(version="%prog "+fuse.__version__,usage="Error",tbs=tbs)
 	utils.Logger('********tbs',str(tbs[0]))
 	utils.Logger('********objs',str(tbs[1]))
 	server.parse(errex=0)
-	server.main()		#Start the main event loop
+	server.main()		#Start the main event loop'''
 
 
 if __name__=='__main__':

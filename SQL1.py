@@ -1,8 +1,8 @@
 import MySQLdb
 import json,string
-import utils
+import utils1 as utils
 
-NROWS = 500
+NROWS = 1000
 
 class DBConnect:
 	'''Class for getting a connection to MySQL instance'''
@@ -22,7 +22,6 @@ class DBConnect:
 
 class DB:
 	index = {}
-	tabfiles = {}	#{name:startoffset}
 	def __init__(self, db):
 		self.lastRec = {}
 		self.lrindex = {}
@@ -36,23 +35,24 @@ class DB:
 		self.types = {}		#Type of each and every column
 		self.crtabs = {}
 		self.tabs = []
-		self.filepartsize = {}
+		self.tabfiles = {}	#{name:startoffset}
 	
-	
+	def buildIndexTab(self, tab):
+		tindex = {}
+		self.gettableheadings(tab)
+		tindex[tab],counter = utils.buildIndex(tab, self.gettableIndex(tab), self.keys[tab])
+		DB.index[str(self)].update(tindex)
+		print tindex[tab].printOT()
 		
 	def buildIndex(self):
 		count = 0
 		tindex = {}
-		#print "INDEX builinding for", str(self)
+		print "INDEX builinding for", str(self)
 		for tab in self.tabs:
-			headings = self.gettableheadings(tab)
+			self.gettableheadings(tab)
 			tindex[tab],counter = utils.buildIndex(tab, self.gettableIndex(tab), self.keys[tab])
-			self.filepartsize[tab] = [ x + len(headings) for x in tindex[tab].getSizeList()]
-			#print tab
-			#print self.filepartsize[tab]
-			#raw_input()
 			count += counter
-		#print "Indexed ", count, "records in database ", str(self)
+		print "Indexed ", count, "records in database ", str(self)
 		DB.index[str(self)] = tindex
 		return count
 	
@@ -67,85 +67,15 @@ class DB:
 		return self.keys.get(tabname)
 	
 		
-	def alterTable(self, add, remove, tabname, flag = 0):
-		head = self.headings[tabname]
-		head = [h.lower() for h in head]
-		head = [h.split('(')[0] if '(' in h else h for h in head]
-		#print head
-		change = []
-		for a in add:
-			na, da = a.split(' ',1)
-			na = na.replace("'","")
-			#print na + '~'
-			#print da + '~'
-			sql = ''
-			if na in head:
-				#print 'ALREADY THERE'
-				#print 'only modify column'
-				change.append(na)
-				sql = 'alter table ' + str(self) + '.' + tabname + " modify " + na + " " + da
-				#print sql
-				
-			else:
-				#print 'NEW COLUMN'
-				sql = 'alter table ' + str(self) + '.' + tabname + " add " + na + " " + da
-				#print sql
-			if sql:
-				db = DBConnect.getdatabase(d = str(self))
-				cursor = db.cursor()
-				#print sql
-				try:
-					cursor.execute(sql)
-					db.commit()
-				except MySQLdb.Error, e:
-					#print "MYSQL ERROR ~~~~~~~~~~~~~~~~~~~~~~~~", e
-					cursor.close()
-					db.close()
-					return -1
-				utils.SQLLogger('ALTER', sql)
-				cursor.close()
-				db.close()
-			
-		for r in remove:
-			nr, dr = r.split(' ',1)
-			nr = nr.replace("'","")
-			sql = ''
-			if nr in head and nr in change:
-				pass
-				#print 'ALREADY THERE HANDLED IN add CASE'
-			else:
-				#print 'NEW COLUMN'
-				sql = 'alter table ' + str(self) + '.' + tabname + " drop " + nr 
-				#print sql
-			if sql:
-				db = DBConnect.getdatabase(d = str(self))
-				cursor = db.cursor()
-				#print sql
-				try:
-					cursor.execute(sql)
-					db.commit()
-				except MySQLdb.Error, e:
-					#print "MYSQL ERROR ~~~~~~~~~~~~~~~~~~~~~~~~", e
-					cursor.close()
-					db.close()
-					return -1
-				utils.SQLLogger('ALTER', sql)
-				cursor.close()
-				db.close()
-		del self.headings[tabname]
-		self.gettableheadings(tabname)
-		self.buildIndexTab(tabname)
-		DB.getcreatetable(self, [tabname])
-		return 0
-		
+	
 	def createTable(self,tabname, flag = 0):
 		if flag == 0:
-			#print "CREATE NEW TABLE"
+			print "CREATE NEW TABLE"
 			self.removeTable(tabname)
 			db = DBConnect.getdatabase(d = str(self))
 			cursor = db.cursor()
 			sql = ' create table ' + str(self) + "." + tabname + ' (id int)'
-			#print sql
+			print sql
 			cursor.execute(sql)
 			db.commit()
 			utils.SQLLogger('CREATE', sql)
@@ -166,12 +96,12 @@ class DB:
 			sql = ' create table ' + str(self) + "." + tabname + r
 			db = DBConnect.getdatabase(d = str(self))
 			cursor = db.cursor()
-			#print sql
+			print sql
 			try:
 				cursor.execute(sql)
 				db.commit()
 			except MySQLdb.Error, e:
-				#print "MYSQL ERROR ~~~~~~~~~~~~~~~~~~~~~~~~", e
+				print "MYSQL ERROR ~~~~~~~~~~~~~~~~~~~~~~~~", e
 				cursor.close()
 				db.close()
 				return -1
@@ -181,11 +111,11 @@ class DB:
 			DB.getcreatetable(self, [tabname])
 	
 	def removeTable(self,tabname):
-		#print "DROP TABLE"
+		print "DROP TABLE"
 		db = DBConnect.getdatabase(d = str(self))
 		cursor = db.cursor()
 		sql = 'drop table if exists '+ str(self) + '.' +tabname 
-		#print sql
+		print sql
 		cursor.execute(sql)
 		db.commit()
 		utils.SQLLogger('DROP TABLE', sql)
@@ -220,13 +150,83 @@ class DB:
 			db = DBConnect.getdatabase()
 			cursor = db.cursor()
 			sql = 'drop database if exists '+ name
-			#print sql
+			print sql
 			cursor.execute(sql)
 			db.commit()
 			utils.SQLLogger('DROP', sql)
 			cursor.close()
 			db.close()
 			
+	
+	def alterTable(self, add, remove, tabname, flag = 0):
+		head = self.headings[tabname]
+		head = [h.lower() for h in head]
+		head = [h.split('(')[0] if '(' in h else h for h in head]
+		print head
+		change = []
+		for a in add:
+			na, da = a.split(' ',1)
+			na = na.replace("'","")
+			print na + '~'
+			print da + '~'
+			sql = ''
+			if na in head:
+				print 'ALREADY THERE'
+				print 'only modify column'
+				change.append(na)
+				sql = 'alter table ' + str(self) + '.' + tabname + " modify " + na + " " + da
+				print sql
+				
+			else:
+				print 'NEW COLUMN'
+				sql = 'alter table ' + str(self) + '.' + tabname + " add " + na + " " + da
+				print sql
+			if sql:
+				db = DBConnect.getdatabase(d = str(self))
+				cursor = db.cursor()
+				print sql
+				try:
+					cursor.execute(sql)
+					db.commit()
+				except MySQLdb.Error, e:
+					print "MYSQL ERROR ~~~~~~~~~~~~~~~~~~~~~~~~", e
+					cursor.close()
+					db.close()
+					return -1
+				utils.SQLLogger('ALTER', sql)
+				cursor.close()
+				db.close()
+			
+		for r in remove:
+			nr, dr = r.split(' ',1)
+			nr = nr.replace("'","")
+			sql = ''
+			if nr in head and nr in change:
+				print 'ALREADY THERE HANDLED IN add CASE'
+			else:
+				print 'NEW COLUMN'
+				sql = 'alter table ' + str(self) + '.' + tabname + " drop " + nr 
+				print sql
+			if sql:
+				db = DBConnect.getdatabase(d = str(self))
+				cursor = db.cursor()
+				print sql
+				try:
+					cursor.execute(sql)
+					db.commit()
+				except MySQLdb.Error, e:
+					print "MYSQL ERROR ~~~~~~~~~~~~~~~~~~~~~~~~", e
+					cursor.close()
+					db.close()
+					return -1
+				utils.SQLLogger('ALTER', sql)
+				cursor.close()
+				db.close()
+		del self.headings[tabname]
+		self.gettableheadings(tabname)
+		self.buildIndexTab(tabname)
+		DB.getcreatetable(self, [tabname])
+		return 0
 			
 	@staticmethod
 	def createdatabase(name):
@@ -234,13 +234,13 @@ class DB:
 			db = DBConnect.getdatabase()
 			cursor = db.cursor()
 			sql = 'drop database if exists '+ name
-			#print sql
+			print sql
 			cursor.execute(sql)
 			db.commit()
 			utils.SQLLogger('DROP', sql)
 			cursor = db.cursor()
 			sql = 'create database '+ name
-			#print sql
+			print sql
 			cursor.execute(sql)
 			db.commit()
 			utils.SQLLogger('CREATE', sql)
@@ -274,8 +274,8 @@ class DB:
 				ll.append(c.strip())
 			r = ll
 			js = {}
-			#print str(d),tab
-			#print r
+			print str(d),tab
+			print r
 			for t in r:
 				if 'CONSTRAINT ' in t or 'UNIQUE KEY' in t or 'PRIMARY KEY' in t:
 					t = t.split(' ', 2)
@@ -284,25 +284,25 @@ class DB:
 					for e in t[2:]:
 						h.append(e)
 					t = h
-					#print t
+					print t
 				else:
 					t = t.split(' ',1)
-				#print "TEST",t
+				print "TEST",t
 			#	if str(d) == 'Project':
-			#		#raw_input()
+			#		raw_input()
 				if t[0] != '':
 					if ',' == t[1][-1]:
 						js[t[0]] = t[1][:-1] 
 					else:
 						js[t[0]] = t[1]
-			#print js
+			print js
 			#if str(d) == 'Project':
-			#		#raw_input()
+			#		raw_input()
 			r = json.dumps(js, indent = 0)
 			'''
-			#print r
+			print r
 			#if str(d) == 'Project':
-			#		#raw_input()
+			#		raw_input()
 			crtabs[str(tab)] = str(r)
 			
 			cursor.close()
@@ -342,19 +342,6 @@ class DB:
 				self.content[table] = self.gettable(table)
 				utils.Logger('set table content',str(table))
 	
-	def gettabsizepart(self, tabname):
-		#print tabname
-		tabname,n = str(tabname).split('.')[0].split(utils.part)
-		n = int(n)
-		tabname = tabname.rsplit('/',1)[1]
-		#print '~~~~~~',tabname,'~~~~~',n
-		#print self.filepartsize[tabname]
-		#raw_input()
-		if tabname in self.filepartsize:
-			utils.Logger('Get Table Size',str(self)+'.'+str(tabname))
-			utils.SQLLogger('Table Size',str(self.filepartsize[tabname]))
-			return self.filepartsize[tabname][n]
-		return 0
 	def gettabsize(self, tabname):
 		'''Get the character size in bytes for the table'''
 		tabname = str(tabname).rsplit('/',1)[1].split('.')[0]
@@ -378,7 +365,7 @@ class DB:
 				where.append(self.setcontenttype(tabname, head[i], r[i], i))
 		where = ' and '.join(where)
 		sql = dele + where
-		#print sql
+		print sql
 		db = DBConnect.getdatabase(d = str(self))
 		cursor = db.cursor()
 		try:
@@ -404,24 +391,24 @@ class DB:
 		
 		keys = self.keys[tabname]		#key columns in table
 		new = set(data.split('\n'))		# the current data buffer value as a set
-		#print new
+		print new
 		#if offset != 0:
 		#	old = old[self.lrindex[tabname] : self.lrindex[tabname] + len(new)]
 		#	self.lrindex[tabname] += len(new) + 1
 		#else:
 		#	self.lrindex[tabname] = 0
-		##print 'Top Rec', old[0]
+		#print 'Top Rec', old[0]
 		olds = set(old)
 		cur = new - olds				# corresponding new values in the current data
-		#print len(olds)
-		#print len(new)
-		##print "CUR",cur
+		print len(olds)
+		print len(new)
+		#print "CUR",cur
 		
-		#print len(cur)
+		print len(cur)
 		delete = olds - new			# Old values that don't occur in the new data
 		#old = self.content[tabname].split('\n')	#old has implicit order as displayed
 		oo = []
-		##print 'ODL B4 SPLIT',old
+		#print 'ODL B4 SPLIT',old
 		for c in old:
 			if c:
 				c = c.split(utils.delim)
@@ -432,43 +419,43 @@ class DB:
 			if c:
 				c = c.split(utils.delim)
 				cold.append(c)			#cold is a [[]] list of lists of values to be modified
-		##print 'TO DELETE',delete
+		#print 'TO DELETE',delete
 		#self.checkPKmodification(tabname, delete, cur, cold, old, new)
 		for d in delete:
 			r = d.split(utils.delim)
 			for i in range(len(r)):
 				flag = 0
 				for p in cold:		
-					#print 'cur data', p		# A list is an ordered data type
-					#print 'TAB KEYS',keys		# keys has column heading if a primary key otherwise a value NU&&
+					print 'cur data', p		# A list is an ordered data type
+					print 'TAB KEYS',keys		# keys has column heading if a primary key otherwise a value NU&&
 					if r[i] == p[i] and keys[i] != 'NU&&':
 						flag += 1		#check if all primary keys match
-				#print 'FLAG VAL DELETE',flag
+				print 'FLAG VAL DELETE',flag
 				if flag == self.nkeys[tabname]:
-					#print 'row for update'		# if all PKs match then it is an update 
+					print 'row for update'		# if all PKs match then it is an update 
 					break
 				else:
 					self.deletedb(tabname, r)	#delete the row from table
 					break
-		##print 'ODL',old
-		#print 'CUR',cur
+		#print 'ODL',old
+		print 'CUR',cur
 		for c in cur:
 			r = c.split(utils.delim)
 			for i in range(len(r)):
 				flag = 0
 				for p in old:
 					
-					#print 'old data', p			# A list is an ordered data type
-					#print 'TAB KEYS',keys			# keys has column heading if a primary key otherwise a value NU&&
+					print 'old data', p			# A list is an ordered data type
+					print 'TAB KEYS',keys			# keys has column heading if a primary key otherwise a value NU&&
 					if r[i] == p[i] and keys[i] != 'NU&&':					
 						flag += 1		#check if all primary keys match
 					
 				if flag == self.nkeys[tabname]:
-					#print 'going to update'		# if all PKs match but the data tuple is different from the old one
+					print 'going to update'		# if all PKs match but the data tuple is different from the old one
 					self.updatedb(tabname, r)	# then some other column is updated in the data tuple
 					break
 				else:
-					#print 'going to insert'
+					print 'going to insert'
 					self.insertdb(tabname, r)	# Else it is a new data tuple to be added
 					break
 	
@@ -482,12 +469,12 @@ class DB:
 	'''
 	
 	def getRecsize(self, tabname):
-		#print 'get rec size'
+		print 'get rec size'
 		return len(self.keys[tabname])
 	
 	def insertdb(self, tabname, r):
 		'''Insert a new row r into table tabname'''
-		#print 'ROW', r
+		print 'ROW', r
 		keys = self.keys[tabname]
 		head = self.headings[tabname]
 		db = DBConnect.getdatabase(d = str(self))
@@ -504,7 +491,7 @@ class DB:
 		theads = ','.join(theads) + ') ' 
 		vals = 'values (' + ','.join(vals) + ')'
 		sql = insert + theads + vals
-		#print sql
+		print sql
 		try:
 			cursor.execute(sql)
 			utils.SQLLogger('INSERT', sql)
@@ -514,12 +501,12 @@ class DB:
 			cursor.close()
 			db.close()
 			raise Exception('INSERT SQL','COMMIT ERROR')
-		##print self.content.keys()
+		#print self.content.keys()
 		#if tabname in self.content:
 		#	del self.content[tabname]
 		#	self.content[tabname] = self.gettable(tabname)
 			
-		#	#print self.content[tabname]
+		#	print self.content[tabname]
 		cursor.close()
 		db.close()
 		
@@ -539,7 +526,7 @@ class DB:
 		where = ' where ' + ' and '.join(where)
 		cols = ','.join(cols)
 		sql = sql + cols + where
-		#print sql
+		print sql
 		cursor.close()
 		cursor = db.cursor()
 		try:
@@ -642,9 +629,9 @@ class DB:
 			utils.Logger('Connect to database',str(self))
 			db = DBConnect.getdatabase(d = str(self))
 			utils.Logger('Get cursor',str(db))
-			#print "~!@#~!@#"
-			#print pkset
-			#print "~!@#~!@#"
+			print "~!@#~!@#"
+			print pkset
+			print "~!@#~!@#"
 			if pkset:
 				sql = 'select * from '+ str(self) + '.' + tabname + ' where '
 			
@@ -662,14 +649,14 @@ class DB:
 						pks[i].append(pk[i])
 				i = 0
 				head = self.headings[tabname]
-				#print head
+				print head
 				types = self.types[tabname]
-				#print types
+				print types
 				where = []
 				for j in range(len(head)):
 					if '(PRIMARY KEY)' in head[j]:
 						H = head[j][:string.find(head[j],'(PRIMARY KEY)')]
-						#print H, types[j]
+						print H, types[j]
 						if 'char' in types[j] or "'" in types[j] or 'varchar' in types[j] or 'date' in types[j]:
 					 		where.append(H + ' in (' + ','.join(["'" + v + "'" for v in pks[i]]) + ") ")
 					 		i += 1
@@ -680,14 +667,13 @@ class DB:
 				tsql = sql + where
 				utils.SQLLogger('SELECT', tsql)
 				utils.Logger('SELECT', tsql)
-				#print tsql
+				print tsql
 				cursor  = db.cursor()
 				utils.Logger('Got Cursor',str(db))
 				try:
-					cursor.execute(tsql)
+					cursor.execute('select * from '+ str(self) + '.' + tabname)
 				except MySQLdb.Error, e:
-					pass
-					#print " Error IN SQL ",e
+					print " Error IN SQL ",e
 				utils.Logger('SQL Execute',str(cursor))
 				buf = ""
 		
@@ -737,7 +723,7 @@ class DB:
 				line = utils.delim.join(c)
 				utils.Logger('Each row csv',str(line))
 				buf += line + '\n'
-				##print buf
+				#print buf
 				c = cursor.fetchone()
 				yield buf
 	
@@ -752,7 +738,7 @@ def listdatabases(h,u,p,d):
 	cur.close()
 	db.close()
 	L = []
-	#print ldb
+	print ldb
 	for r in ldb:
 		baselist.append(r[0])
 		d = r[0]	#db name
@@ -763,14 +749,13 @@ def listdatabases(h,u,p,d):
 		cur.execute('show tables;')
 		utils.SQLLogger('SHOW','show tables')
 		tabs = cur.fetchall()
-		#print '~',tabs,'~'
+		print '~',tabs,'~'
 		if tabs:
-			pass
-			#print type(tabs),type(tabs[0])
-		##raw_input()
+			print type(tabs),type(tabs[0])
+		#raw_input()
 		cur.close()
 		db.close()
 		dbobj.settabs(tabs)
 		L.append(dbobj)
-		#print d,"TABLS",tabs
+		print d,"TABLS",tabs
 	return L
